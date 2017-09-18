@@ -19,23 +19,27 @@ void setup(void) {
     Serial.println("Setup finished");
 }
 
-// Pulse Density Modulated 16-bit I2S DAC
-uint32_t i2sACC;
-uint16_t err;
-
-void writeDAC(uint16_t DAC) {
-    for (uint8_t i = 0; i < 32; ++i) {
-        i2sACC = i2sACC << 1;
-        if (DAC >= err) {
-            i2sACC |= 1;
-            err += 0xFFFF - DAC;
-        } else {
-            err -= DAC;
-        }
+// Taken from https://github.com/espressif/ESP8266_MP3_DECODER/blob/master/mp3/user/user_main.c
+// 2nd order delta-sigma DAC
+// See http://www.beis.de/Elektronik/DeltaSigma/DeltaSigma.html for a nice explanation
+int sampToI2sDeltaSigma(short s) {
+    int x;
+    int val = 0;
+    int w;
+    static int i1v = 0, i2v = 0;
+    static int outReg = 0;
+    for (x = 0; x < 32; x++) {
+        val <<= 1; //next bit
+        w = s;
+        if (outReg > 0) w -= 32767; else w += 32767; //Difference 1
+        w += i1v; i1v = w; //Integrator 1
+        if (outReg > 0) w -= 32767; else w += 32767; //Difference 2
+        w += i2v; i2v = w; //Integrator 2
+        outReg = w;   //register
+        if (w > 0) val |= 1; //comparator
     }
-    i2s_write_sample(i2sACC);
+    return val;
 }
-
 
 int rate = 32000;
 
@@ -54,7 +58,7 @@ void play() {
         int numBytes = _min(sizeof(buffer), f.size() - f.position() - 1);
         f.readBytes((char*)buffer, numBytes);
         for (int i = 0; i < numBytes / 2; i++) {
-            writeDAC(buffer[i] + (0xffff >> 1));
+            i2s_write_sample(sampToI2sDeltaSigma(buffer[i]));
         }
     }
     
